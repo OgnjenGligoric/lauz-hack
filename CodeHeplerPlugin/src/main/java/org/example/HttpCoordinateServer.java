@@ -1,8 +1,12 @@
 package org.example;
 
+import com.intellij.ide.DataManager;
+import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.editor.LogicalPosition;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
@@ -12,8 +16,13 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.*;
 import io.netty.util.CharsetUtil;
 
+import javax.swing.*;
+import java.awt.*;
+import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Map;
+
+import org.json.JSONObject;
 
 @Service(Service.Level.APP)
 public final class HttpCoordinateServer {
@@ -24,6 +33,8 @@ public final class HttpCoordinateServer {
     private EventLoopGroup workerGroup;
     private Channel channel;
 
+    private boolean isRunning = false;
+
     public HttpCoordinateServer() {
         LOG.info("HttpCoordinateServer service initialized. Starting Netty server...");
 
@@ -31,16 +42,17 @@ public final class HttpCoordinateServer {
     }
 
     public void startServer() {
-        if (channel != null && channel.isOpen()) {
+        if (isRunning) {
             LOG.info("HTTP server is already running.");
             return;
         }
 
-        bossGroup = new NioEventLoopGroup(1); // Accept incoming connections
-        workerGroup = new NioEventLoopGroup(); // Handle traffic of the accepted connections
+        bossGroup = new NioEventLoopGroup(1);
+        workerGroup = new NioEventLoopGroup();
 
         try {
             ServerBootstrap b = new ServerBootstrap();
+
             b.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
                     .childHandler(new ChannelInitializer<SocketChannel>() {
@@ -48,19 +60,26 @@ public final class HttpCoordinateServer {
                         protected void initChannel(SocketChannel ch) {
                             ChannelPipeline p = ch.pipeline();
                             p.addLast(new HttpServerCodec());
-                            p.addLast(new HttpObjectAggregator(65536)); // To aggregate fragmented HTTP messages
+                            p.addLast(new HttpObjectAggregator(65536));
                             p.addLast(new HttpCoordinateHandler());
                         }
                     })
                     .option(ChannelOption.SO_BACKLOG, 128)
                     .childOption(ChannelOption.SO_KEEPALIVE, true);
 
-            // Bind and start to accept incoming connections.
-            channel = b.bind(PORT).sync().channel();
-            LOG.info("✅ HTTP server started on port " + PORT);
+            ChannelFuture future = b.bind(PORT);
 
-        } catch (InterruptedException e) {
-            LOG.error("Failed to start HTTP server", e);
+            channel = future.sync().channel();
+
+            if (future.isSuccess()) {
+                isRunning = true;
+                LOG.info("Bound Address: " + ((InetSocketAddress)channel.localAddress()).getHostString()
+                        + ":" + ((InetSocketAddress)channel.localAddress()).getPort());
+            } else {
+                stopServer();
+            }
+
+        } catch (Exception e) {
             stopServer();
         }
     }
@@ -76,7 +95,6 @@ public final class HttpCoordinateServer {
         LOG.info("HTTP server stopped.");
     }
 
-    // Inner class to handle HTTP requests
     private static class HttpCoordinateHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
         @Override
@@ -84,13 +102,11 @@ public final class HttpCoordinateServer {
             QueryStringDecoder decoder = new QueryStringDecoder(request.uri());
             Map<String, List<String>> parameters = decoder.parameters();
 
-            // 1. Check Path: Only handle requests to the root path
             if (!decoder.path().equals("/")) {
                 sendError(ctx, HttpResponseStatus.NOT_FOUND);
                 return;
             }
 
-            // 2. Extract parameters
             String xStr = getFirstValue(parameters, "x");
             String yStr = getFirstValue(parameters, "y");
 
@@ -103,13 +119,30 @@ public final class HttpCoordinateServer {
                 int x = Integer.parseInt(xStr);
                 int y = Integer.parseInt(yStr);
 
-                // 3. Execute action on the EDT
-                ApplicationManager.getApplication().invokeLater(() -> {
-                    PrintLineAction.handleCoordinates(x, y);
+                final int[] lineNumberHolder = { -1 };
+                final StringBuilder fileTextHolder = new StringBuilder();
+
+                ApplicationManager.getApplication().invokeAndWait(() -> {
+                    Editor editor = CommonDataKeys.EDITOR.getData(DataManager.getInstance().getDataContext());
+                    if (editor == null) {
+                        return;
+                    }
+
+                    JComponent editorComponent = editor.getContentComponent();
+                    Point screenPoint = new Point(x, y);
+                    SwingUtilities.convertPointFromScreen(screenPoint, editorComponent);
+
+                    LogicalPosition pos = editor.xyToLogicalPosition(screenPoint);
+                    lineNumberHolder[0] = pos.line;
+
+                    fileTextHolder.append(editor.getDocument().getText());
                 });
 
-                // 4. Send success response
-                sendResponse(ctx, HttpResponseStatus.OK, "OK. Line copied.");
+                // Build JSON response
+                String jsonResponse = "{ \"lineNumber\": " + lineNumberHolder[0] +
+                        ", \"fileText\": " + JSONObject.quote(fileTextHolder.toString()) + " }";
+
+                sendResponse(ctx, HttpResponseStatus.OK, jsonResponse);
 
             } catch (NumberFormatException e) {
                 sendError(ctx, HttpResponseStatus.BAD_REQUEST);

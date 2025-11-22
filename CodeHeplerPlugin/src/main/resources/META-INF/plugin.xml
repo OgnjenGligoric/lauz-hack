@@ -14,6 +14,7 @@
     </actions>
 
     <extensions defaultExtensionNs="com.intellij">
-        <restService implementation="org.example.HttpCoordinateServer"/>
-    </extensions>
+        <applicationService
+                serviceImplementation="org.example.HttpCoordinateServer"
+                preload="true" /> </extensions>
 </idea-plugin>
