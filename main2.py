@@ -1,3 +1,4 @@
+import tkinter as tk
 import cv2
 import time
 import json
@@ -7,12 +8,10 @@ from queue import Queue
 from eyetrax import GazeEstimator, run_9_point_calibration
 from hand_engine import HandTracker
 
-
 SERVER_URL = "http://localhost:5005/"
 
-
 class BackgroundTrackerService:
-    def __init__(self, server_url=SERVER_URL, show_debug=False, offline_mode=False):
+    def __init__(self, server_url=SERVER_URL, show_debug=True, offline_mode=False):
         self.server_url = server_url
         self.show_debug = show_debug
         self.offline_mode = offline_mode
@@ -33,30 +32,54 @@ class BackgroundTrackerService:
 
         print("Initializing Hand Tracker...")
         self.hand_tracker = HandTracker()
+
+        self.root = tk.Tk()
+        self.root.title("Eye & Hand Controller")
+        
+        self.screen_w = self.root.winfo_screenwidth()
+        self.screen_h = self.root.winfo_screenheight()
+        
+        self.root.geometry(f"{self.screen_w}x{self.screen_h}+0+0")
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.root.attributes("-alpha", 0.7)
+        
+        self.canvas = tk.Canvas(
+            self.root, 
+            width=self.screen_w, 
+            height=self.screen_h, 
+            bg='white', 
+            highlightthickness=0
+        )
+        self.canvas.pack()
         
         try:
-            import tkinter as tk
-            root = tk.Tk()
-            self.screen_w = root.winfo_screenwidth()
-            self.screen_h = root.winfo_screenheight()
-            root.destroy()
+            self.root.wm_attributes("-transparentcolor", "white")
         except:
-            self.screen_w = 1920
-            self.screen_h = 1080
-            print(f"Warning: Could not detect screen size, using default {self.screen_w}x{self.screen_h}")
-        
-        print(f"Screen resolution: {self.screen_w}x{self.screen_h}")
+            pass
+
+        self.pointer_size = 20
+        self.pointer = self.canvas.create_oval(
+            0, 0, 
+            self.pointer_size, 
+            self.pointer_size, 
+            fill='red', 
+            outline='red'
+        )
+
+        self.root.bind("<Escape>", lambda e: self.stop())
         
         self.current_gaze = {"x": 0, "y": 0}
+        
+        self.debug_w = 320
+        self.debug_h = 240
+        self.debug_name = "Mini Camera Debug"
 
     def send_event(self, event_data):
         if self.offline_mode:
-            print(f"📤 [OFFLINE] Would send: {json.dumps(event_data)}")
             return
             
         try:
-            print(f"📤 Sending: {json.dumps(event_data, indent=2)}")
-            
             response = requests.post(
                 self.server_url,
                 json=event_data,
@@ -78,104 +101,105 @@ class BackgroundTrackerService:
             except:
                 continue
 
-    def process_loop(self):
-        while self.running:
-            ret, frame = self.cap.read()
-            if not ret:
-                time.sleep(0.01)
-                continue
+    def parse_action(self, event):
+        if "SWIPE_UP" in event: return "swipe_up"
+        elif "SWIPE_DOWN" in event: return "swipe_down"
+        elif "SWIPE_LEFT" in event: return "swipe_left"
+        elif "SWIPE_RIGHT" in event: return "swipe_right"
+        elif "SPECIAL_POSE" in event: return "special_pose"
+        elif "OPEN_PALM" in event: return "open_palm"
+        elif "CLOSED_HAND" in event: return "closed_hand"
+        elif "THUMBS_UP" in event: return "thumbs_up"
+        else: return "unknown"
 
-            features, blink = self.gaze_tracker.extract_features(frame)
-            
-            if features is not None and not blink:
-                coordinates = self.gaze_tracker.predict([features])[0]
-                gx, gy = int(coordinates[0]), int(coordinates[1])
-                
-                gx = max(0, min(gx, self.screen_w))
-                gy = max(0, min(gy, self.screen_h))
-                
-                self.current_gaze = {"x": gx, "y": gy}
+    def update_loop(self):
+        ret, frame = self.cap.read()
+        if not ret:
+            self.root.after(10, self.update_loop)
+            return
 
-            annotated_frame, events = self.hand_tracker.process(frame)
+        features, blink = self.gaze_tracker.extract_features(frame)
+        
+        gaze_detected = False
+        if features is not None and not blink:
+            coordinates = self.gaze_tracker.predict([features])[0]
+            gx, gy = int(coordinates[0]), int(coordinates[1])
             
-            if events:
-                timestamp = time.time()
-                for event in events:
-                    action_type = self.parse_action(event)
-                    
-                    gesture_event = {
-                        "timestamp": int(timestamp * 1000),
-                        "type": "gesture",
-                        "action": action_type,
-                        "coordinates": self.current_gaze,
-                        "raw_event": event
-                    }
-                    
-                    self.event_queue.put(gesture_event)
-                    print(f"[{time.strftime('%H:%M:%S')}] {event}")
+            gx = max(0, min(gx, self.screen_w))
+            gy = max(0, min(gy, self.screen_h))
+            
+            self.current_gaze = {"x": gx, "y": gy}
+            gaze_detected = True
 
             if self.show_debug:
-                cv2.imshow("Debug View", annotated_frame)
-                if cv2.waitKey(1) & 0xFF == 27:
-                    self.stop()
-                    break
+                self.canvas.coords(
+                    self.pointer, 
+                    gx - self.pointer_size/2, 
+                    gy - self.pointer_size/2, 
+                    gx + self.pointer_size/2, 
+                    gy + self.pointer_size/2
+                )
+                self.canvas.itemconfigure(self.pointer, state='normal')
             else:
-                cv2.waitKey(1)
-
-    def parse_action(self, event):
-        if "SWIPE_UP" in event:
-            return "swipe_up"
-        elif "SWIPE_DOWN" in event:
-            return "swipe_down"
-        elif "SWIPE_LEFT" in event:
-            return "swipe_left"
-        elif "SWIPE_RIGHT" in event:
-            return "swipe_right"
-        elif "SPECIAL_POSE" in event:
-            return "special_pose"
-        elif "OPEN_PALM" in event:
-            return "open_palm"
-        elif "CLOSED_HAND" in event:
-            return "closed_hand"
-        elif "THUMBS_UP" in event:
-            return "thumbs_up"
+                self.canvas.itemconfigure(self.pointer, state='hidden')
         else:
-            return "unknown"
+             self.canvas.itemconfigure(self.pointer, state='hidden')
 
-    def start(self):
+        annotated_frame, events = self.hand_tracker.process(frame)
+        
+        if events:
+            timestamp = time.time()
+            for event in events:
+                action_type = self.parse_action(event)
+                gesture_event = {
+                    "timestamp": int(timestamp * 1000),
+                    "type": "gesture",
+                    "action": action_type,
+                    "coordinates": self.current_gaze,
+                    "raw_event": event
+                }
+                self.event_queue.put(gesture_event)
+                print(f"[{time.strftime('%H:%M:%S')}] DETECTED: {event}")
+
+        if self.show_debug:
+            small_frame = cv2.resize(annotated_frame, (self.debug_w, self.debug_h))
+            
+            cv2.imshow(self.debug_name, small_frame)
+            
+            cv2.moveWindow(self.debug_name, 0, 0)
+            
+            cv2.waitKey(1)
+
+        self.root.after(10, self.update_loop)
+
+    def run(self):
         self.running = True
         
         self.http_thread = threading.Thread(target=self.http_worker, daemon=True)
         self.http_thread.start()
         
-        self.process_thread = threading.Thread(target=self.process_loop, daemon=True)
-        self.process_thread.start()
-        
         print("\n=== SERVICE STARTED ===")
         print(f"Server: {self.server_url}")
-        print(f"Debug window: {'ON' if self.show_debug else 'OFF'}")
-        print("Press Ctrl+C to stop\n")
+        print("- Red dot overlay ACTIVE")
+        print("- Mini Camera Debug ACTIVE")
+        print("Press ESC to exit\n")
+        
+        self.update_loop()
+        self.root.mainloop()
 
     def stop(self):
         print("\n=== SHUTTING DOWN ===")
         self.running = False
         self.cap.release()
         cv2.destroyAllWindows()
+        self.root.destroy()
         print("Service stopped.")
-
-    def run(self):
-        self.start()
-        try:
-            while self.running:
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            self.stop()
 
 
 if __name__ == "__main__":
     service = BackgroundTrackerService(
         server_url="http://localhost:5005/",
-        show_debug=False,
+        show_debug=True, 
         offline_mode=False
     )
     
