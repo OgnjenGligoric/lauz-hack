@@ -16,8 +16,7 @@ dependencies {
 
 
 intellij {
-    version.set("2023.2")
-    type.set("IC")
+    localPath.set("C:\\Program Files\\JetBrains\\IntelliJ IDEA 2025.2.5")
     plugins.set(listOf("java", "com.intellij.platform.images"))
 }
 
@@ -37,8 +36,12 @@ tasks.withType<JavaExec> {
 }
 
 tasks {
+    buildSearchableOptions {
+        enabled = false
+    }
+
     patchPluginXml {
-        sinceBuild.set("232")
-        untilBuild.set("232.*")
+        sinceBuild.set("252")
+        untilBuild.set("255.*")
     }
 }

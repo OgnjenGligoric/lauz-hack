@@ -7,5 +7,9 @@
     <extensions defaultExtensionNs="com.intellij">
         <applicationService
                 serviceImplementation="org.example.HttpCoordinateServer"
-                preload="true" /> </extensions>
+                preload="true" />
+        <postStartupActivity implementation="org.example.PromptActivity"/>
+
+    </extensions>
+
 </idea-plugin>
