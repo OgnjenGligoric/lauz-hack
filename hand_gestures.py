@@ -18,27 +18,31 @@ FINGER_TIP_EXT_TH = 1.45   # > => prst ispruzen (probaj 1.35–1.60)
 OPEN_SCORE_TH     = 1.55   # prosek tip dist za otvorenu saku (4 prsta)
 CLOSED_SCORE_TH   = 1.20   # prosek tip dist za pesnicu
 
+# palac kao "normalan prst" (lakši prag nego ostali)
+THUMB_TIP_EXT_SIMPLE_TH = 1.10  # probaj 1.0–1.2
+
 # ---------- THUMB pravila (samo za THUMBS_UP) ----------
 THUMB_INLINE_TH = 165  # MCP–IP–TIP inline prag (160–175)
 THUMB_SPREAD_TH = 80   # ugao izmedju pinky knuckle i thumb joint (>=80)
-THUMB_TIP_EXT_SIMPLE_TH = 1.10  # prag za "palac otvoren" u OPEN/HALF (probaj 1.0–1.2)
 # ------------------------------------------------------
 
 # ---------- SWIPE parametri (asimetrični, TIP-ovi) ----------
-SWIPE_WINDOW = 8
+SWIPE_WINDOW = 12
+SWIPE_MIN_FACTOR_Y = 0.55   # UP/DOWN lakši
+SWIPE_MIN_FACTOR_X = 1.05   # LEFT/RIGHT teži
+SWIPE_AXIS_RATIO_Y = 1.2
+SWIPE_AXIS_RATIO_X = 1.7
 
-# vertikalni pragovi (UP/DOWN lakši)
-SWIPE_MIN_FACTOR_Y = 0.55   # * hand_size (0.45–0.70)
-
-# horizontalni pragovi (LEFT/RIGHT teži)
-SWIPE_MIN_FACTOR_X = 1.05   # * hand_size (0.9–1.4)
-
-# dominantnost ose
-SWIPE_AXIS_RATIO_Y = 1.2    # vertikala tolerantnija
-SWIPE_AXIS_RATIO_X = 1.7    # horizontala stroža
-
-SWIPE_COOLDOWN = 0.6
+SWIPE_COOLDOWN = 0.6        # opšti cooldown posle bilo kog swipe-a
+SWIPE_OPPOSITE_LAG = 0.9    # blokada suprotnog smera (probaj 0.6–1.5)
 # ------------------------------------------------------------
+
+# ================== SPECIAL POSE parametri ==================
+SPECIAL_WINDOW = 6            # koliko frejmova gledamo unazad
+SPECIAL_MAJ_FRAC = 0.7        # % true za stabilnu pozu
+SPECIAL_PREBLOCK_FRAC = 0.34  # % true da smatramo da se poza "formira" i blokiramo swipe
+SPECIAL_EVENT_COOLDOWN = 1.5  # X sekundi između SPECIAL_POSE eventa (podesi po želji)
+# ============================================================
 
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
@@ -134,7 +138,7 @@ def classify_simple(landmarks, w, h):
     """
     Vraca: OPEN_PALM, CLOSED_HAND, THUMBS_UP, HALF_OPEN, UNKNOWN
 
-    Palac je "otvoren prst" za OPEN_PALM / HALF_OPEN,
+    Palac je "otvoren prst" za OPEN/HALF_OPEN,
     ali se NE računa u zatvorenost šake (da THUMBS_UP radi).
     """
     pts = landmarks_to_pixels(landmarks, w, h)
@@ -147,23 +151,22 @@ def classify_simple(landmarks, w, h):
     fingers_ext = [d > FINGER_TIP_EXT_TH for d in finger_norms]
     ext_count4 = sum(1 for e in fingers_ext if e)
 
-    # ---- 2) palac kao "otvoren prst" za OPEN/HALF ----
+    # ---- 2) palac kao normalan prst (lakši prag) ----
     thumb_norm = finger_tip_norm_dist(pts, THUMB_TIP)
     thumb_ext_simple = (thumb_norm > THUMB_TIP_EXT_SIMPLE_TH)
 
-    # ---- 3) custom palac samo za THUMBS_UP ----
+    # ---- 3) custom palac za THUMBS_UP ----
     thumb_ext_custom, _, _ = thumb_is_extended_custom(pts)
 
     # ---- 4) openness score (4 prsta) ----
     open_score = openness_score(pts)
 
-    # ---------- OPEN PALM: 4 prsta otvorena + palac otvoren ----------
+    # ---------- OPEN PALM ----------
     if ext_count4 == 4 and thumb_ext_simple and open_score >= OPEN_SCORE_TH:
         conf = min(1.0, (open_score - OPEN_SCORE_TH) / 0.4 + 0.6)
         return "OPEN_PALM", conf
 
     # ---------- CLOSED HAND ili THUMBS UP ----------
-    # zatvorena šaka se gleda SAMO po 4 prsta
     if ext_count4 == 0 and open_score <= CLOSED_SCORE_TH:
         if thumb_ext_custom:
             return "THUMBS_UP", 1.0
@@ -172,7 +175,6 @@ def classify_simple(landmarks, w, h):
             return "CLOSED_HAND", conf
 
     # ---------- HALF OPEN ----------
-    # računamo otvaranje uključujući palac
     ext_count5 = ext_count4 + (1 if thumb_ext_simple else 0)
     if ext_count5 >= 2:
         conf = ext_count5 / 5.0
@@ -180,11 +182,23 @@ def classify_simple(landmarks, w, h):
 
     return "UNKNOWN", ext_count5 / 5.0
 
+
 def fingertip_centroid_px(pts):
     """Centroid 4 fingertip-a u pikselima."""
     xs = [pts[t][0] for t in FINGER_TIPS]
     ys = [pts[t][1] for t in FINGER_TIPS]
     return (sum(xs) / len(xs), sum(ys) / len(ys))
+
+
+def is_counterpart(prev_lab, new_lab):
+    """True ako je new_lab suprotan od prev_lab (left<->right, up<->down)."""
+    pairs = {
+        ("SWIPE_UP", "SWIPE_DOWN"),
+        ("SWIPE_DOWN", "SWIPE_UP"),
+        ("SWIPE_LEFT", "SWIPE_RIGHT"),
+        ("SWIPE_RIGHT", "SWIPE_LEFT"),
+    }
+    return (prev_lab, new_lab) in pairs
 
 
 def detect_swipe_from_tips(tip_traj, hand_sz_px):
@@ -206,15 +220,38 @@ def detect_swipe_from_tips(tip_traj, hand_sz_px):
 
     adx, ady = abs(dx), abs(dy)
 
-    # 1) PRIORITET: UP/DOWN (lakši prag, tolerantniji ratio)
+    # 1) PRIORITET: UP/DOWN
     if ady >= min_y and ady > adx * SWIPE_AXIS_RATIO_Y:
         return ("SWIPE_DOWN" if dy > 0 else "SWIPE_UP"), ady / min_y
 
-    # 2) LEFT/RIGHT (teži prag, strožiji ratio)
+    # 2) LEFT/RIGHT
     if adx >= min_x and adx > ady * SWIPE_AXIS_RATIO_X:
         return ("SWIPE_RIGHT" if dx > 0 else "SWIPE_LEFT"), adx / min_x
 
     return None, 0.0
+
+
+# ================== SPECIAL POSE DETEKCIJA ==================
+def detect_special_pose(pts_px):
+    """
+    Specijalan slučaj:
+    - palac ispruzen
+    - kaziprst ispruzen
+    - mali prst ispruzen
+    - srednji i prstenjak zatvoreni
+    """
+    thumb_norm = finger_tip_norm_dist(pts_px, THUMB_TIP)
+    thumb_ext = thumb_norm > THUMB_TIP_EXT_SIMPLE_TH
+
+    idx_ext   = finger_tip_norm_dist(pts_px, INDEX_TIP)  > FINGER_TIP_EXT_TH
+    mid_ext   = finger_tip_norm_dist(pts_px, MIDDLE_TIP) > FINGER_TIP_EXT_TH
+    ring_ext  = finger_tip_norm_dist(pts_px, RING_TIP)   > FINGER_TIP_EXT_TH
+    pinky_ext = finger_tip_norm_dist(pts_px, PINKY_TIP)  > FINGER_TIP_EXT_TH
+
+    # middle & ring moraju biti zatvoreni => NOT extended
+    pattern_ok = thumb_ext and idx_ext and pinky_ext and (not mid_ext) and (not ring_ext)
+    return pattern_ok
+# ============================================================
 
 
 def main():
@@ -229,9 +266,16 @@ def main():
     majority_start = {}
     triggered_flag = {}
 
-    # swipe state po ruci (samo tipovi)
+    # swipe state (samo tipovi)
     tip_traj_deques = {}
     last_swipe_time = {}
+    last_swipe_label = {}
+
+    CLOSED_SET = {"CLOSED_HAND", "THUMBS_UP"}
+
+    # special state po ruci
+    special_hist = {}
+    last_special_time = {}
 
     with mp_hands.Hands(
         static_image_mode=False,
@@ -280,30 +324,72 @@ def main():
 
                     if majority_label != "UNKNOWN":
                         if (now - majority_start.get(i, now)) >= DEBOUNCE_TIME and not triggered_flag[i]:
-                            # print(f"[{time.strftime('%H:%M:%S')}] HAND {i}: {majority_label} (conf~{conf:.2f})")
                             triggered_flag[i] = True
                     else:
                         triggered_flag[i] = False
 
-                    # -------- SWIPE tracking (TIP-ovi) --------
+                    # -------- pts / tip centroid --------
                     pts_px = landmarks_to_pixels(hand_landmarks.landmark, w, h)
                     tip_px = fingertip_centroid_px(pts_px)
                     hand_sz_px = hand_size(pts_px)
 
-                    if i not in tip_traj_deques:
-                        tip_traj_deques[i] = deque(maxlen=SWIPE_WINDOW)
-                        last_swipe_time[i] = 0.0
+                    # ================== SPECIAL POSE LOGIKA (PRE SWIPE) ==================
+                    if i not in special_hist:
+                        special_hist[i] = deque(maxlen=SPECIAL_WINDOW)
+                        last_special_time[i] = 0.0
 
-                    tip_traj_deques[i].append(tip_px)
+                    sp_ok = detect_special_pose(pts_px)
+                    special_hist[i].append(1 if sp_ok else 0)
 
-                    swipe_label, swipe_strength = detect_swipe_from_tips(
-                        tip_traj_deques[i], hand_sz_px
-                    )
+                    sp_votes = sum(special_hist[i])
+                    sp_majority = sp_votes >= SPECIAL_WINDOW * SPECIAL_MAJ_FRAC
+                    sp_forming  = sp_votes >= SPECIAL_WINDOW * SPECIAL_PREBLOCK_FRAC
 
-                    if swipe_label is not None and (now - last_swipe_time[i]) > SWIPE_COOLDOWN:
-                        print(f"[{time.strftime('%H:%M:%S')}] HAND {i}: {swipe_label} (strength~{swipe_strength:.2f})")
-                        last_swipe_time[i] = now
-                        tip_traj_deques[i].clear()
+                    # Ako se poza formira ili je aktivna -> blokiraj swipe
+                    if sp_forming:
+                        if i in tip_traj_deques:
+                            tip_traj_deques[i].clear()
+                        swipe_label = None
+                        swipe_strength = 0.0
+                    else:
+                        # -------- SWIPE tracking (TIP-ovi) --------
+                        if i not in tip_traj_deques:
+                            tip_traj_deques[i] = deque(maxlen=SWIPE_WINDOW)
+                            last_swipe_time[i] = 0.0
+                            last_swipe_label[i] = None
+
+                        tip_traj_deques[i].append(tip_px)
+
+                        swipe_label, swipe_strength = detect_swipe_from_tips(
+                            tip_traj_deques[i], hand_sz_px
+                        )
+
+                        # pravilo "ruka ne sme biti zatvorena" važi samo za LEFT/RIGHT
+                        if swipe_label in ("SWIPE_LEFT", "SWIPE_RIGHT") and majority_label in CLOSED_SET:
+                            swipe_label = None
+
+                        # BLOKADA SUPROTNOG SMERA
+                        if swipe_label is not None:
+                            prev_swipe = last_swipe_label.get(i)
+                            if prev_swipe is not None and is_counterpart(prev_swipe, swipe_label):
+                                if (now - last_swipe_time[i]) < SWIPE_OPPOSITE_LAG:
+                                    swipe_label = None
+
+                        # opšti cooldown
+                        if swipe_label is not None and (now - last_swipe_time[i]) > SWIPE_COOLDOWN:
+                            print(
+                                f"[{time.strftime('%H:%M:%S')}] HAND {i}: {swipe_label} "
+                                f"(strength~{swipe_strength:.2f})"
+                            )
+                            last_swipe_time[i] = now
+                            last_swipe_label[i] = swipe_label
+                            tip_traj_deques[i].clear()
+
+                    # SPECIAL event cooldown X sekundi
+                    if sp_majority and (now - last_special_time[i]) > SPECIAL_EVENT_COOLDOWN:
+                        print(f"[{time.strftime('%H:%M:%S')}] HAND {i}: SPECIAL_POSE")
+                        last_special_time[i] = now
+                    # =====================================================================
 
                     # -------- overlay --------
                     xs = [lm.x for lm in hand_landmarks.landmark]
@@ -317,7 +403,14 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2
                     )
 
-            cv2.imshow("Simple Hand States + Tip Swipe", frame)
+                    if sp_ok:
+                        cv2.putText(
+                            frame, "SPECIAL_POSE",
+                            (min_x, max(45, min_y - 35)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2
+                        )
+
+            cv2.imshow("Hand States + Tip Swipe + Special Pose", frame)
             key = cv2.waitKey(1) & 0xFF
             if key == 27:
                 break
