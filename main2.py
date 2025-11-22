@@ -8,7 +8,7 @@ from eyetrax import GazeEstimator, run_9_point_calibration
 from hand_engine import HandTracker
 
 
-SERVER_URL = "http://localhost:8080/api/events"
+SERVER_URL = "http://localhost:5005/"
 
 
 class BackgroundTrackerService:
@@ -64,7 +64,7 @@ class BackgroundTrackerService:
                 timeout=1
             )
             if response.status_code == 200:
-                print(f"✓ Sent: {event_data['action']}")
+                print(f"✓ Sent: {response.json()}")
             else:
                 print(f"✗ Server error: {response.status_code}")
         except requests.exceptions.RequestException as e:
@@ -174,7 +174,7 @@ class BackgroundTrackerService:
 
 if __name__ == "__main__":
     service = BackgroundTrackerService(
-        server_url="http://localhost:8080/api/events",
+        server_url="http://localhost:5005/",
         show_debug=False,
         offline_mode=False
     )
