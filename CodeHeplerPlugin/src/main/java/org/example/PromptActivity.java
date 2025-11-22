@@ -20,63 +20,69 @@ public class PromptActivity implements ProjectActivity {
     @Override
     public Object execute(@NotNull Project project, @NotNull Continuation<? super Unit> continuation) {
 
-        System.out.println("[PromptActivity] execute() START");
-
-        // Ensure the server service is started
-        System.out.println("[PromptActivity] Starting HttpCoordinateServer service...");
         ApplicationManager.getApplication().getService(HttpCoordinateServer.class);
-        System.out.println("[PromptActivity] HttpCoordinateServer started.");
-
         ApplicationManager.getApplication().invokeLater(() -> {
-            System.out.println("[PromptActivity] invokeLater() START");
 
-            // 1. Try to find the JetBrains AI Assistant Tool Window
-            System.out.println("[PromptActivity] Looking for AI Assistant ToolWindow...");
             ToolWindow aiToolWindow = ToolWindowManager.getInstance(project).getToolWindow("AIAssistant");
 
             if (aiToolWindow != null) {
-                System.out.println("[PromptActivity] AIAssistant ToolWindow FOUND");
-
-                // 2. If found, activate (open) it automatically
                 aiToolWindow.activate(() -> {
-                    System.out.println("[PromptActivity] AIAssistant activated, checking focusOwner...");
 
                     Component focusOwner = KeyboardFocusManager
                             .getCurrentKeyboardFocusManager()
                             .getFocusOwner();
 
-                    if (focusOwner == null) {
-                        System.out.println("[PromptActivity] focusOwner = NULL");
-                        return;
-                    }
+                    Component target = isAiAssistantInput(focusOwner) ? focusOwner : findAiAssistantComponent(aiToolWindow.getComponent());
 
-                    System.out.println("[PromptActivity] focusOwner class = " + focusOwner.getClass().getName());
-
-                    // Case 1: Standard Swing text component (search bars, fields, dialogs, etc.)
-                    if (focusOwner instanceof JTextComponent) {
-                        System.out.println("[PromptActivity] focusOwner is JTextComponent — writing text...");
-                        JTextComponent tc = (JTextComponent) focusOwner;
+                    if (target instanceof JTextComponent) {
+                        JTextComponent tc = (JTextComponent) target;
 
                         ApplicationManager.getApplication().invokeLater(() -> {
-                            System.out.println("[PromptActivity] Writing 'how are you' into text field...");
                             tc.setText("how are you");
                         });
-
-                        return;
                     }
-
-                    System.out.println("[PromptActivity] focusOwner is NOT a text field.");
                 });
 
             } else {
-                System.out.println("[PromptActivity] AIAssistant ToolWindow NOT FOUND");
                 Messages.showInfoMessage(project, "JetBrains AI Assistant not found or not active.", "Plugin Info");
             }
-
-            System.out.println("[PromptActivity] invokeLater() END");
         });
-
-        System.out.println("[PromptActivity] execute() END");
         return Unit.INSTANCE;
+    }
+
+    private Component findAiAssistantComponent(Component component) {
+        if (isAiAssistantInput(component)) {
+            return component;
+        }
+        if (component instanceof Container) {
+            for (Component child : ((Container) component).getComponents()) {
+                Component found = findAiAssistantComponent(child);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean isAiAssistantInput(Component c) {
+        if (c == null) return false;
+
+        // AI Assistant chat always uses IntelliJ EditorComponentImpl
+        if (!c.getClass().getName().contains("EditorComponentImpl")) {
+            return false;
+        }
+
+        // Walk up the UI hierarchy looking for AI Assistant containers
+        Component parent = c.getParent();
+        while (parent != null) {
+            String name = parent.getClass().getName().toLowerCase();
+            if (name.contains("aiassistant") || name.contains("assistant")) {
+                return true;
+            }
+            parent = parent.getParent();
+        }
+
+        return false;
     }
 }
