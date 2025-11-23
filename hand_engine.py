@@ -85,9 +85,7 @@ def classify_simple(landmarks, w, h):
 
 
 def detect_special_pose(pts_px):
-    """
-    SPECIAL_POSITION = any 4 fingers extended (thumb counts as finger)
-    """
+
     thumb_ext = finger_tip_norm_dist(pts_px, THUMB_TIP) > THUMB_TIP_EXT_SIMPLE_TH
     idx_ext   = finger_tip_norm_dist(pts_px, INDEX_TIP) > FINGER_TIP_EXT_TH
     mid_ext   = finger_tip_norm_dist(pts_px, MIDDLE_TIP) > FINGER_TIP_EXT_TH
@@ -195,7 +193,7 @@ class HandTracker:
                     point_lbl = None
 
             if sp_majority:
-                final_state = "SPECIAL_POSITION"
+                final_state = "SPECIAL_POSE"
             elif point_lbl:
                 final_state = point_lbl
             else:
@@ -204,9 +202,9 @@ class HandTracker:
             if final_state != "UNKNOWN":
                 if now - self.last_action_time >= ACTION_COOLDOWN:
                     if final_state != self.last_non_unknown_state:
-                        if final_state == "SPECIAL_POSITION":
+                        if final_state == "SPECIAL_POSE":
                             if now - self.last_special_time > SPECIAL_EVENT_COOLDOWN:
-                                events.append("SPECIAL_POSITION")
+                                events.append("SPECIAL_POSE")
                                 self.last_special_time = now
                                 self.last_non_unknown_state = final_state
                                 self.last_action_time = now

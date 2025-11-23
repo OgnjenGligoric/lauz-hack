@@ -19,7 +19,7 @@ class BackgroundTrackerService:
         
         self.event_queue = Queue()
         
-        self.cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+        self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
             raise ValueError("Camera not found!")
 
