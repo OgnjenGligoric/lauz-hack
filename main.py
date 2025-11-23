@@ -162,9 +162,9 @@ class BackgroundTrackerService:
         if self.show_debug:
             small_frame = cv2.resize(annotated_frame, (self.debug_w, self.debug_h))
             
-            cv2.imshow(self.debug_name, small_frame)
+            # cv2.imshow(self.debug_name, small_frame)
             
-            cv2.moveWindow(self.debug_name, 0, 0)
+            # cv2.moveWindow(self.debug_name, 0, 0)
             
             cv2.waitKey(1)
 
