@@ -114,16 +114,13 @@ public final class HttpCoordinateServer {
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest request) {
             try {
-                // Read request body
                 ByteBuf content = request.content();
                 String body = content.toString(java.nio.charset.StandardCharsets.UTF_8);
 
                 JSONObject json = new JSONObject(body);
 
-                // Get the action field
                 String action = json.optString("action", "unknown");
 
-                // Route action
                 switch (action) {
                     case "swipe_up" -> {
                         scrollUp();
@@ -155,7 +152,6 @@ public final class HttpCoordinateServer {
             }
         }
 
-        // Extracted function with coordinate handling
         private String handleHandSpecialPose(JSONObject json) {
             if (!json.has("coordinates")) return "{\"error\": \"missing coordinates\"}";
 
@@ -185,7 +181,6 @@ public final class HttpCoordinateServer {
             String prompt = "Explain the code and it's context around line " + lineNumberHolder[0];
             execute(prompt);
 
-            // Build JSON response string
             return "{ \"lineNumber\": " + lineNumberHolder[0] +
                     ", \"fileText\": " + JSONObject.quote(fileTextHolder.toString()) + " }";
         }
@@ -198,7 +193,7 @@ public final class HttpCoordinateServer {
                 var scrollingModel = editor.getScrollingModel();
                 var visibleArea = scrollingModel.getVisibleArea();
 
-                int delta = (int)(visibleArea.height * 0.66); // 2/3 of the visible height
+                int delta = (int)(visibleArea.height * 0.66);
 
                 scrollingModel.scrollVertically(visibleArea.y - delta);
             });
@@ -212,7 +207,7 @@ public final class HttpCoordinateServer {
                 var scrollingModel = editor.getScrollingModel();
                 var visibleArea = scrollingModel.getVisibleArea();
 
-                int delta = (int)(visibleArea.height * 0.66); // 2/3 of screen
+                int delta = (int)(visibleArea.height * 0.66);
 
                 scrollingModel.scrollVertically(visibleArea.y + delta);
             });
@@ -312,12 +307,9 @@ public final class HttpCoordinateServer {
                         if (target instanceof JTextComponent) {
                             JTextComponent tc = (JTextComponent) target;
 
-                            // 1. Postavite fokus
                             tc.requestFocusInWindow();
                             tc.setText(prompt);
 
-                            // 2. Koristite Robot za simulaciju Enter-a
-                            // Moramo biti u invokeLater bloku da bi osigurali da je UI postavljen
                             ApplicationManager.getApplication().invokeLater(() -> {
                                 try {
                                     Robot robot = new Robot();
@@ -359,12 +351,10 @@ public final class HttpCoordinateServer {
         private boolean isAiAssistantInput(Component c) {
             if (c == null) return false;
 
-            // AI Assistant chat always uses IntelliJ EditorComponentImpl
             if (!c.getClass().getName().contains("EditorComponentImpl")) {
                 return false;
             }
 
-            // Walk up the UI hierarchy looking for AI Assistant containers
             Component parent = c.getParent();
             while (parent != null) {
                 String name = parent.getClass().getName().toLowerCase();
