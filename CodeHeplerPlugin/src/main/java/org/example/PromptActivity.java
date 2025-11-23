@@ -3,16 +3,21 @@ package org.example;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.startup.ProjectActivity;
+import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowManager;
-import com.intellij.openapi.ui.Messages;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 import kotlin.Unit;
 import kotlin.coroutines.Continuation;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
+import java.awt.Robot;
+import java.awt.event.InputEvent;
+import javax.swing.*;
 import javax.swing.text.JTextComponent;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
+
 
 public class PromptActivity implements ProjectActivity {
 
@@ -20,7 +25,6 @@ public class PromptActivity implements ProjectActivity {
     @Override
     public Object execute(@NotNull Project project, @NotNull Continuation<? super Unit> continuation) {
 
-        ApplicationManager.getApplication().getService(HttpCoordinateServer.class);
         ApplicationManager.getApplication().invokeLater(() -> {
 
             ToolWindow aiToolWindow = ToolWindowManager.getInstance(project).getToolWindow("AIAssistant");
@@ -37,9 +41,26 @@ public class PromptActivity implements ProjectActivity {
                     if (target instanceof JTextComponent) {
                         JTextComponent tc = (JTextComponent) target;
 
+                        // 1. Postavite fokus
+                        tc.requestFocusInWindow();
+                        tc.setText("how are you");
+
+                        // 2. Koristite Robot za simulaciju Enter-a
+                        // Moramo biti u invokeLater bloku da bi osigurali da je UI postavljen
                         ApplicationManager.getApplication().invokeLater(() -> {
-                            tc.setText("how are you");
+                            try {
+                                Robot robot = new Robot();
+                                robot.delay(100);
+
+                                robot.keyPress(KeyEvent.VK_ENTER);
+                                robot.keyRelease(KeyEvent.VK_ENTER);
+
+                            } catch (AWTException e) {
+                                e.printStackTrace();
+                                Messages.showErrorDialog(project, "Robot creation failed: " + e.getMessage(), "Robot Error");
+                            }
                         });
+
                     }
                 });
 
@@ -49,7 +70,6 @@ public class PromptActivity implements ProjectActivity {
         });
         return Unit.INSTANCE;
     }
-
     private Component findAiAssistantComponent(Component component) {
         if (isAiAssistantInput(component)) {
             return component;
@@ -85,4 +105,7 @@ public class PromptActivity implements ProjectActivity {
 
         return false;
     }
+
+
 }
+
