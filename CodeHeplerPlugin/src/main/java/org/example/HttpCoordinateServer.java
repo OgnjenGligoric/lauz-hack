@@ -9,7 +9,10 @@ import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.LogicalPosition;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.wm.ToolWindow;
+import com.intellij.openapi.wm.ToolWindowManager;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
@@ -20,11 +23,16 @@ import io.netty.handler.codec.http.*;
 import io.netty.util.CharsetUtil;
 
 import javax.swing.*;
+import javax.swing.text.JTextComponent;
 import java.awt.*;
+import java.awt.event.KeyEvent;
 import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Map;
 
+import kotlin.Unit;
+import kotlin.coroutines.Continuation;
+import org.jetbrains.annotations.NotNull;
 import org.json.JSONObject;
 import io.netty.buffer.ByteBuf;
 import io.netty.handler.codec.http.FullHttpRequest;
@@ -174,6 +182,9 @@ public final class HttpCoordinateServer {
                 fileTextHolder.append(editor.getDocument().getText());
             });
 
+            String prompt = "Explain the code and it's context around line " + lineNumberHolder[0];
+            execute(prompt);
+
             // Build JSON response string
             return "{ \"lineNumber\": " + lineNumberHolder[0] +
                     ", \"fileText\": " + JSONObject.quote(fileTextHolder.toString()) + " }";
@@ -277,6 +288,93 @@ public final class HttpCoordinateServer {
 
         private void sendError(ChannelHandlerContext ctx, HttpResponseStatus status) {
             sendResponse(ctx, status, "Failure: " + status.reasonPhrase());
+        }
+
+        public Object execute(String prompt) {
+
+            ApplicationManager.getApplication().invokeLater(() -> {
+                Project project = CommonDataKeys.PROJECT.getData(
+                        DataManager.getInstance().getDataContext()
+                );
+                if (project == null) return;
+
+                ToolWindow aiToolWindow = ToolWindowManager.getInstance(project).getToolWindow("AIAssistant");
+
+                if (aiToolWindow != null) {
+                    aiToolWindow.activate(() -> {
+
+                        Component focusOwner = KeyboardFocusManager
+                                .getCurrentKeyboardFocusManager()
+                                .getFocusOwner();
+
+                        Component target = isAiAssistantInput(focusOwner) ? focusOwner : findAiAssistantComponent(aiToolWindow.getComponent());
+
+                        if (target instanceof JTextComponent) {
+                            JTextComponent tc = (JTextComponent) target;
+
+                            // 1. Postavite fokus
+                            tc.requestFocusInWindow();
+                            tc.setText(prompt);
+
+                            // 2. Koristite Robot za simulaciju Enter-a
+                            // Moramo biti u invokeLater bloku da bi osigurali da je UI postavljen
+                            ApplicationManager.getApplication().invokeLater(() -> {
+                                try {
+                                    Robot robot = new Robot();
+                                    robot.delay(100);
+
+                                    robot.keyPress(KeyEvent.VK_ENTER);
+                                    robot.keyRelease(KeyEvent.VK_ENTER);
+
+                                } catch (AWTException e) {
+                                    e.printStackTrace();
+                                    Messages.showErrorDialog(project, "Robot creation failed: " + e.getMessage(), "Robot Error");
+                                }
+                            });
+
+                        }
+                    });
+
+                } else {
+                    Messages.showInfoMessage(project, "JetBrains AI Assistant not found or not active.", "Plugin Info");
+                }
+            });
+            return Unit.INSTANCE;
+        }
+        private Component findAiAssistantComponent(Component component) {
+            if (isAiAssistantInput(component)) {
+                return component;
+            }
+            if (component instanceof Container) {
+                for (Component child : ((Container) component).getComponents()) {
+                    Component found = findAiAssistantComponent(child);
+                    if (found != null) {
+                        return found;
+                    }
+                }
+            }
+            return null;
+        }
+
+        private boolean isAiAssistantInput(Component c) {
+            if (c == null) return false;
+
+            // AI Assistant chat always uses IntelliJ EditorComponentImpl
+            if (!c.getClass().getName().contains("EditorComponentImpl")) {
+                return false;
+            }
+
+            // Walk up the UI hierarchy looking for AI Assistant containers
+            Component parent = c.getParent();
+            while (parent != null) {
+                String name = parent.getClass().getName().toLowerCase();
+                if (name.contains("aiassistant") || name.contains("assistant")) {
+                    return true;
+                }
+                parent = parent.getParent();
+            }
+
+            return false;
         }
     }
 }
