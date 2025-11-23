@@ -9,36 +9,28 @@ MIN_DET_CONF = 0.5
 MIN_TRACK_CONF = 0.5
 SMOOTH_FRAMES = 8
 
-# Thresholds (opuštenije)
 FINGER_TIP_EXT_TH = 1.65
 CLOSED_SCORE_TH = 1.20
 THUMB_TIP_EXT_SIMPLE_TH = 1.10
 
-# Prag za "savijen prst"
 FINGER_TIP_CLOSED_TH = 1.32
 
-# Pointing params
 POINT_AXIS_RATIO = 1.3
 POINT_MIN_CONF = 0.35
 
-# --- NEW: SWIPE_DOWN override ---
 SWIPE_DOWN_AXIS_RATIO = 1.1
 SWIPE_DOWN_MIN_CONF   = 0.20
 
-# Special Pose
 SPECIAL_WINDOW = 6
 SPECIAL_MAJ_FRAC = 0.7
 SPECIAL_PREBLOCK_FRAC = 0.34
 SPECIAL_EVENT_COOLDOWN = 1.5
 
-# Global action cooldown
 ACTION_COOLDOWN = 0.5
 
-# ================= MEDIAPIPE SETUP =================
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 
-# Landmarks indices
 WRIST = 0
 THUMB_TIP = 4
 
@@ -92,7 +84,6 @@ def classify_simple(landmarks, w, h):
     return "UNKNOWN", 0.0
 
 
-# ------------------- SPECIAL POSITION -------------------
 def detect_special_pose(pts_px):
     """
     SPECIAL_POSITION = any 4 fingers extended (thumb counts as finger)
@@ -106,7 +97,6 @@ def detect_special_pose(pts_px):
     ext_count = sum([thumb_ext, idx_ext, mid_ext, ring_ext, pinky_ext])
 
     return ext_count >= 4
-# ---------------------------------------------------------
 
 
 def detect_pointing_direction(pts_px):
@@ -131,10 +121,8 @@ def detect_pointing_direction(pts_px):
 
     ax, ay = abs(vx), abs(vy)
 
-    # -------- DOWN OVERRIDE (knuckles up) --------
     if vy > 0 and ay > ax * SWIPE_DOWN_AXIS_RATIO and vlen_norm > SWIPE_DOWN_MIN_CONF:
         return "SWIPE_DOWN", vlen_norm
-    # ---------------------------------------------
 
     mid_ext  = mid_d > FINGER_TIP_EXT_TH
     ring_ext = ring_d > FINGER_TIP_EXT_TH
@@ -190,14 +178,12 @@ class HandTracker:
             now = time.time()
             pts_px = landmarks_to_pixels(hand_landmarks.landmark, w, h)
 
-            # -------- SPECIAL POSITION --------
             sp_ok = detect_special_pose(pts_px)
             self.special_hist.append(1 if sp_ok else 0)
             sp_votes = sum(self.special_hist)
             sp_forming = sp_votes >= SPECIAL_WINDOW * SPECIAL_PREBLOCK_FRAC
             sp_majority = sp_votes >= SPECIAL_WINDOW * SPECIAL_MAJ_FRAC
 
-            # -------- POINTING --------
             point_lbl = None
             if not sp_forming:
                 point_lbl, _ = detect_pointing_direction(pts_px)
@@ -208,7 +194,6 @@ class HandTracker:
                 if sp_majority and point_lbl == "SWIPE_UP":
                     point_lbl = None
 
-            # final state
             if sp_majority:
                 final_state = "SPECIAL_POSITION"
             elif point_lbl:
@@ -216,7 +201,6 @@ class HandTracker:
             else:
                 final_state = majority_label
 
-            # -------- EVENT GATING + COOLDOWN --------
             if final_state != "UNKNOWN":
                 if now - self.last_action_time >= ACTION_COOLDOWN:
                     if final_state != self.last_non_unknown_state:
@@ -233,7 +217,6 @@ class HandTracker:
 
             self.last_final_state = final_state
 
-            # Draw label
             min_x = int(min([lm.x for lm in hand_landmarks.landmark]) * w)
             min_y = int(min([lm.y for lm in hand_landmarks.landmark]) * h)
 
@@ -246,30 +229,30 @@ class HandTracker:
         return frame, events
 
 
-if __name__ == "__main__":
-    cap = cv2.VideoCapture(0)
-    tracker = HandTracker()
+# if __name__ == "__main__":
+#     cap = cv2.VideoCapture(0)
+#     tracker = HandTracker()
 
-    if not cap.isOpened():
-        print("❌ Camera not found!")
-        exit()
+#     if not cap.isOpened():
+#         print("Camera not found!")
+#         exit()
 
-    print("🎥 Starting hand tracker... Press Q to quit.")
+#     print("Starting hand tracker... Press Q to quit.")
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+#     while True:
+#         ret, frame = cap.read()
+#         if not ret:
+#             break
 
-        frame, events = tracker.process(frame)
+#         frame, events = tracker.process(frame)
 
-        for ev in events:
-            print("EVENT:", ev)
+#         for ev in events:
+#             print("EVENT:", ev)
 
-        cv2.imshow("Hand Tracking", frame)
+#         cv2.imshow("Hand Tracking", frame)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+#         if cv2.waitKey(1) & 0xFF == ord('q'):
+#             break
 
-    cap.release()
-    cv2.destroyAllWindows()
+#     cap.release()
+#     cv2.destroyAllWindows()
