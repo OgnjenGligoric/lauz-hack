@@ -87,7 +87,7 @@ class BackgroundTrackerService:
                 timeout=1
             )
             if response.status_code == 200:
-                print(f"✓ Sent: {response.json()}")
+                print(f"✓ Sent: {event_data['action']}")
             else:
                 print(f"✗ Server error: {response.status_code}")
         except requests.exceptions.RequestException as e:
@@ -107,9 +107,6 @@ class BackgroundTrackerService:
         elif "SWIPE_LEFT" in event: return "swipe_left"
         elif "SWIPE_RIGHT" in event: return "swipe_right"
         elif "SPECIAL_POSE" in event: return "special_pose"
-        elif "OPEN_PALM" in event: return "open_palm"
-        elif "CLOSED_HAND" in event: return "closed_hand"
-        elif "THUMBS_UP" in event: return "thumbs_up"
         else: return "unknown"
 
     def update_loop(self):
@@ -158,7 +155,8 @@ class BackgroundTrackerService:
                     "coordinates": self.current_gaze,
                     "raw_event": event
                 }
-                self.event_queue.put(gesture_event)
+                if event != "unknown":
+                    self.event_queue.put(gesture_event)
                 print(f"[{time.strftime('%H:%M:%S')}] DETECTED: {event}")
 
         if self.show_debug:

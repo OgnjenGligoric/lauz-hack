@@ -7,6 +7,9 @@ import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.LogicalPosition;
+import com.intellij.openapi.fileEditor.FileEditorManager;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.vfs.VirtualFile;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.*;
@@ -115,16 +118,16 @@ public final class HttpCoordinateServer {
                 // Route action
                 switch (action) {
                     case "swipe_up" -> {
-                        // TODO: implement swipe up
+                        scrollUp();
                     }
                     case "swipe_down" -> {
-                        // TODO: implement swipe down
+                        scrollDown();
                     }
                     case "swipe_left" -> {
-                        // TODO: implement swipe left
+                        previousTab();
                     }
                     case "swipe_right" -> {
-                        // TODO: implement swipe right
+                        nextTab();
                     }
                     case "special_pose" -> {
                         String responseText = handleHandSpecialPose(json);
@@ -176,9 +179,88 @@ public final class HttpCoordinateServer {
                     ", \"fileText\": " + JSONObject.quote(fileTextHolder.toString()) + " }";
         }
 
-        private String getFirstValue(Map<String, List<String>> parameters, String key) {
-            List<String> values = parameters.get(key);
-            return values != null && !values.isEmpty() ? values.get(0) : null;
+        private void scrollUp() {
+            ApplicationManager.getApplication().invokeLater(() -> {
+                Editor editor = CommonDataKeys.EDITOR.getData(DataManager.getInstance().getDataContext());
+                if (editor == null) return;
+
+                var scrollingModel = editor.getScrollingModel();
+                var visibleArea = scrollingModel.getVisibleArea();
+
+                int delta = (int)(visibleArea.height * 0.66); // 2/3 of the visible height
+
+                scrollingModel.scrollVertically(visibleArea.y - delta);
+            });
+        }
+
+        private void scrollDown() {
+            ApplicationManager.getApplication().invokeLater(() -> {
+                Editor editor = CommonDataKeys.EDITOR.getData(DataManager.getInstance().getDataContext());
+                if (editor == null) return;
+
+                var scrollingModel = editor.getScrollingModel();
+                var visibleArea = scrollingModel.getVisibleArea();
+
+                int delta = (int)(visibleArea.height * 0.66); // 2/3 of screen
+
+                scrollingModel.scrollVertically(visibleArea.y + delta);
+            });
+        }
+
+        public static void nextTab() {
+            ApplicationManager.getApplication().invokeLater(() -> {
+                Project project = CommonDataKeys.PROJECT.getData(
+                        DataManager.getInstance().getDataContext()
+                );
+                if (project == null) return;
+
+                FileEditorManager fem = FileEditorManager.getInstance(project);
+                VirtualFile[] files = fem.getOpenFiles();
+                if (files.length == 0) return;
+
+                VirtualFile current = fem.getSelectedFiles().length > 0
+                        ? fem.getSelectedFiles()[0]
+                        : null;
+
+                int index = -1;
+                for (int i = 0; i < files.length; i++) {
+                    if (files[i].equals(current)) {
+                        index = i;
+                        break;
+                    }
+                }
+
+                int nextIndex = (index + 1) % files.length;
+                fem.openFile(files[nextIndex], true);
+            });
+        }
+
+        public static void previousTab() {
+            ApplicationManager.getApplication().invokeLater(() -> {
+                Project project = CommonDataKeys.PROJECT.getData(
+                        DataManager.getInstance().getDataContext()
+                );
+                if (project == null) return;
+
+                FileEditorManager fem = FileEditorManager.getInstance(project);
+                VirtualFile[] files = fem.getOpenFiles();
+                if (files.length == 0) return;
+
+                VirtualFile current = fem.getSelectedFiles().length > 0
+                        ? fem.getSelectedFiles()[0]
+                        : null;
+
+                int index = -1;
+                for (int i = 0; i < files.length; i++) {
+                    if (files[i].equals(current)) {
+                        index = i;
+                        break;
+                    }
+                }
+
+                int prevIndex = (index - 1 + files.length) % files.length;
+                fem.openFile(files[prevIndex], true);
+            });
         }
 
         private void sendResponse(ChannelHandlerContext ctx, HttpResponseStatus status, String content) {

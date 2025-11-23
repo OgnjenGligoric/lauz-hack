@@ -21,9 +21,9 @@ FINGER_TIP_CLOSED_TH = 1.32     # tolerise ugao
 POINT_AXIS_RATIO = 1.3
 POINT_MIN_CONF = 0.35
 
-# --- NEW: POINT_DOWN override when knuckles are up ---
-POINT_DOWN_AXIS_RATIO = 1.1   # lakše okidanje down ose
-POINT_DOWN_MIN_CONF   = 0.20   # index mora biti dovoljno ispruzen
+# --- NEW: SWIPE_DOWN override when knuckles are up ---
+SWIPE_DOWN_AXIS_RATIO = 1.1   # lakše okidanje down ose
+SWIPE_DOWN_MIN_CONF   = 0.20   # index mora biti dovoljno ispruzen
 # -----------------------------------------------------
 
 # Special Pose
@@ -120,7 +120,7 @@ def detect_pointing_direction(pts_px):
 
     NEW RULE:
     if index is clearly extended and its direction vector points strongly DOWN,
-    return POINT_DOWN even if middle/ring look extended (knuckles up case).
+    return SWIPE_DOWN even if middle/ring look extended (knuckles up case).
     """
     idx_d  = finger_tip_norm_dist(pts_px, INDEX_TIP)
     mid_d  = finger_tip_norm_dist(pts_px, MIDDLE_TIP)
@@ -145,10 +145,10 @@ def detect_pointing_direction(pts_px):
 
     ax, ay = abs(vx), abs(vy)
 
-    # --------- POINT_DOWN OVERRIDE ---------
+    # --------- SWIPE_DOWN OVERRIDE ---------
     # If finger points clearly down, ignore other fingers.
-    if vy > 0 and ay > ax * POINT_DOWN_AXIS_RATIO and vlen_norm > POINT_DOWN_MIN_CONF:
-        return "POINT_DOWN", vlen_norm
+    if vy > 0 and ay > ax * SWIPE_DOWN_AXIS_RATIO and vlen_norm > SWIPE_DOWN_MIN_CONF:
+        return "SWIPE_DOWN", vlen_norm
     # --------------------------------------
 
     # default strict rule: middle/ring must be folded
@@ -159,9 +159,9 @@ def detect_pointing_direction(pts_px):
 
     # normal axis decision
     if ay > ax * POINT_AXIS_RATIO:
-        return ("POINT_DOWN" if vy > 0 else "POINT_UP"), vlen_norm
+        return ("SWIPE_DOWN" if vy > 0 else "SWIPE_UP"), vlen_norm
     if ax > ay * POINT_AXIS_RATIO:
-        return ("POINT_RIGHT" if vx > 0 else "POINT_LEFT"), vlen_norm
+        return ("SWIPE_RIGHT" if vx > 0 else "SWIPE_LEFT"), vlen_norm
 
     return None, 0.0
 
@@ -226,13 +226,13 @@ class HandTracker:
             if not sp_forming:
                 point_lbl, _ = detect_pointing_direction(pts_px)
 
-                # blokiraj POINT_UP ako je mali prst podignut
+                # blokiraj SWIPE_UP ako je mali prst podignut
                 pinky_ext = finger_tip_norm_dist(pts_px, PINKY_TIP) > FINGER_TIP_EXT_TH
-                if point_lbl == "POINT_UP" and pinky_ext:
+                if point_lbl == "SWIPE_UP" and pinky_ext:
                     point_lbl = None
 
-                # ako je SPECIAL aktivan, ne salji POINT_UP
-                if sp_majority and point_lbl == "POINT_UP":
+                # ako je SPECIAL aktivan, ne salji SWIPE_UP
+                if sp_majority and point_lbl == "SWIPE_UP":
                     point_lbl = None
 
             # final state: SPECIAL > POINT > BASE
