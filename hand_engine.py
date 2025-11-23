@@ -11,20 +11,19 @@ SMOOTH_FRAMES = 8
 
 # Thresholds (opuštenije)
 FINGER_TIP_EXT_TH = 1.65
-CLOSED_SCORE_TH = 1.20          # manje rigorozno
+CLOSED_SCORE_TH = 1.20
 THUMB_TIP_EXT_SIMPLE_TH = 1.10
 
-# Prag za "savijen prst" (opuštenije)
-FINGER_TIP_CLOSED_TH = 1.32     # tolerise ugao
+# Prag za "savijen prst"
+FINGER_TIP_CLOSED_TH = 1.32
 
 # Pointing params
 POINT_AXIS_RATIO = 1.3
 POINT_MIN_CONF = 0.35
 
-# --- NEW: SWIPE_DOWN override when knuckles are up ---
-SWIPE_DOWN_AXIS_RATIO = 1.1   # lakše okidanje down ose
-SWIPE_DOWN_MIN_CONF   = 0.20   # index mora biti dovoljno ispruzen
-# -----------------------------------------------------
+# --- NEW: SWIPE_DOWN override ---
+SWIPE_DOWN_AXIS_RATIO = 1.1
+SWIPE_DOWN_MIN_CONF   = 0.20
 
 # Special Pose
 SPECIAL_WINDOW = 6
@@ -33,7 +32,7 @@ SPECIAL_PREBLOCK_FRAC = 0.34
 SPECIAL_EVENT_COOLDOWN = 1.5
 
 # Global action cooldown
-ACTION_COOLDOWN = 0.5  # sekunde između bilo koja dva event-a
+ACTION_COOLDOWN = 0.5
 
 # ================= MEDIAPIPE SETUP =================
 mp_hands = mp.solutions.hands
@@ -43,7 +42,6 @@ mp_drawing = mp.solutions.drawing_utils
 WRIST = 0
 THUMB_TIP = 4
 
-# add INDEX_PIP for stable pointing vector
 INDEX_MCP, INDEX_PIP, INDEX_TIP = 5, 6, 8
 MIDDLE_MCP, MIDDLE_TIP = 9, 12
 RING_MCP, RING_TIP = 13, 16
@@ -75,13 +73,8 @@ def openness_score(pts):
 
 def classify_simple(landmarks, w, h):
     """
-    Vraća samo:
-      - "CLOSED_HAND"
-      - "UNKNOWN"
-    Opušten CLOSED_HAND:
-      - bar 3/4 prsta savijena
-      - open_score nizak
-      - ne proveravamo palac (da radi pod uglom)
+    CLOSED_HAND if 3/4 fingers are folded (loose fist)
+    else UNKNOWN
     """
     pts = landmarks_to_pixels(landmarks, w, h)
     sz = hand_size(pts)
@@ -99,11 +92,10 @@ def classify_simple(landmarks, w, h):
     return "UNKNOWN", 0.0
 
 
+# ------------------- SPECIAL POSITION -------------------
 def detect_special_pose(pts_px):
     """
-    Trenutna special poza:
-      - thumb + index + pinky extended
-      - middle + ring folded
+    SPECIAL_POSITION = any 4 fingers extended (thumb counts as finger)
     """
     thumb_ext = finger_tip_norm_dist(pts_px, THUMB_TIP) > THUMB_TIP_EXT_SIMPLE_TH
     idx_ext   = finger_tip_norm_dist(pts_px, INDEX_TIP) > FINGER_TIP_EXT_TH
@@ -111,26 +103,20 @@ def detect_special_pose(pts_px):
     ring_ext  = finger_tip_norm_dist(pts_px, RING_TIP) > FINGER_TIP_EXT_TH
     pinky_ext = finger_tip_norm_dist(pts_px, PINKY_TIP) > FINGER_TIP_EXT_TH
 
-    return thumb_ext and idx_ext and pinky_ext and (not mid_ext) and (not ring_ext)
+    ext_count = sum([thumb_ext, idx_ext, mid_ext, ring_ext, pinky_ext])
+
+    return ext_count >= 4
+# ---------------------------------------------------------
 
 
 def detect_pointing_direction(pts_px):
-    """
-    Pointing = index extended, middle/ring folded.
-
-    NEW RULE:
-    if index is clearly extended and its direction vector points strongly DOWN,
-    return SWIPE_DOWN even if middle/ring look extended (knuckles up case).
-    """
     idx_d  = finger_tip_norm_dist(pts_px, INDEX_TIP)
     mid_d  = finger_tip_norm_dist(pts_px, MIDDLE_TIP)
     ring_d = finger_tip_norm_dist(pts_px, RING_TIP)
 
-    # index must be extended at least
     if idx_d <= FINGER_TIP_EXT_TH:
         return None, 0.0
 
-    # stable vector along index: PIP -> TIP
     x0, y0, _ = pts_px[INDEX_PIP]
     x1, y1, _ = pts_px[INDEX_TIP]
     vx, vy = (x1 - x0), (y1 - y0)
@@ -145,19 +131,16 @@ def detect_pointing_direction(pts_px):
 
     ax, ay = abs(vx), abs(vy)
 
-    # --------- SWIPE_DOWN OVERRIDE ---------
-    # If finger points clearly down, ignore other fingers.
+    # -------- DOWN OVERRIDE (knuckles up) --------
     if vy > 0 and ay > ax * SWIPE_DOWN_AXIS_RATIO and vlen_norm > SWIPE_DOWN_MIN_CONF:
         return "SWIPE_DOWN", vlen_norm
-    # --------------------------------------
+    # ---------------------------------------------
 
-    # default strict rule: middle/ring must be folded
     mid_ext  = mid_d > FINGER_TIP_EXT_TH
     ring_ext = ring_d > FINGER_TIP_EXT_TH
     if mid_ext or ring_ext:
         return None, 0.0
 
-    # normal axis decision
     if ay > ax * POINT_AXIS_RATIO:
         return ("SWIPE_DOWN" if vy > 0 else "SWIPE_UP"), vlen_norm
     if ax > ay * POINT_AXIS_RATIO:
@@ -175,21 +158,15 @@ class HandTracker:
             min_tracking_confidence=MIN_TRACK_CONF
         )
 
-        # smoothing za base (CLOSED/UNKNOWN)
         self.state_deque = deque(maxlen=SMOOTH_FRAMES)
         self.current_majority = "UNKNOWN"
 
-        # special pose istorija
         self.special_hist = deque(maxlen=SPECIAL_WINDOW)
         self.last_special_time = 0.0
 
-        # gating: poslednje NON-UNKNOWN stanje
         self.last_non_unknown_state = None
-
-        # poslednje final stanje za prikaz
         self.last_final_state = None
 
-        # global cooldown između event-a
         self.last_action_time = 0.0
 
     def process(self, frame):
@@ -209,47 +186,43 @@ class HandTracker:
             self.state_deque.append(base_label)
             votes = {l: self.state_deque.count(l) for l in self.state_deque}
             majority_label = max(votes, key=votes.get)
-            self.current_majority = majority_label
 
             now = time.time()
             pts_px = landmarks_to_pixels(hand_landmarks.landmark, w, h)
 
-            # ---------- SPECIAL POSE ----------
+            # -------- SPECIAL POSITION --------
             sp_ok = detect_special_pose(pts_px)
             self.special_hist.append(1 if sp_ok else 0)
             sp_votes = sum(self.special_hist)
             sp_forming = sp_votes >= SPECIAL_WINDOW * SPECIAL_PREBLOCK_FRAC
             sp_majority = sp_votes >= SPECIAL_WINDOW * SPECIAL_MAJ_FRAC
 
-            # ---------- POINTING ----------
+            # -------- POINTING --------
             point_lbl = None
             if not sp_forming:
                 point_lbl, _ = detect_pointing_direction(pts_px)
 
-                # blokiraj SWIPE_UP ako je mali prst podignut
                 pinky_ext = finger_tip_norm_dist(pts_px, PINKY_TIP) > FINGER_TIP_EXT_TH
                 if point_lbl == "SWIPE_UP" and pinky_ext:
                     point_lbl = None
-
-                # ako je SPECIAL aktivan, ne salji SWIPE_UP
                 if sp_majority and point_lbl == "SWIPE_UP":
                     point_lbl = None
 
-            # final state: SPECIAL > POINT > BASE
+            # final state
             if sp_majority:
-                final_state = "SPECIAL_POSE"
+                final_state = "SPECIAL_POSITION"
             elif point_lbl:
                 final_state = point_lbl
             else:
                 final_state = majority_label
 
-            # --------- EVENT GATING + GLOBAL COOLDOWN ------------
+            # -------- EVENT GATING + COOLDOWN --------
             if final_state != "UNKNOWN":
-                if (now - self.last_action_time) >= ACTION_COOLDOWN:
+                if now - self.last_action_time >= ACTION_COOLDOWN:
                     if final_state != self.last_non_unknown_state:
-                        if final_state == "SPECIAL_POSE":
-                            if (now - self.last_special_time) > SPECIAL_EVENT_COOLDOWN:
-                                events.append("SPECIAL_POSE")
+                        if final_state == "SPECIAL_POSITION":
+                            if now - self.last_special_time > SPECIAL_EVENT_COOLDOWN:
+                                events.append("SPECIAL_POSITION")
                                 self.last_special_time = now
                                 self.last_non_unknown_state = final_state
                                 self.last_action_time = now
@@ -260,61 +233,43 @@ class HandTracker:
 
             self.last_final_state = final_state
 
-            # draw label
+            # Draw label
             min_x = int(min([lm.x for lm in hand_landmarks.landmark]) * w)
             min_y = int(min([lm.y for lm in hand_landmarks.landmark]) * h)
 
             color = (0, 255, 0) if final_state != "UNKNOWN" else (0, 0, 255)
-            cv2.putText(
-                frame,
-                final_state,
-                (min_x, max(20, min_y - 10)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                color,
-                2
-            )
-
-            if sp_ok:
-                cv2.putText(
-                    frame,
-                    "SPECIAL_POSE",
-                    (min_x, max(45, min_y - 35)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (255, 0, 255),
-                    2
-                )
-        else:
-            self.last_final_state = "UNKNOWN"
+            cv2.putText(frame, final_state,
+                        (min_x, max(20, min_y - 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8, color, 2)
 
         return frame, events
 
 
-# if __name__ == "__main__":
-#     cap = cv2.VideoCapture(0)
-#     tracker = HandTracker()
+if __name__ == "__main__":
+    cap = cv2.VideoCapture(0)
+    tracker = HandTracker()
 
-#     if not cap.isOpened():
-#         print("❌ Camera not found!")
-#         exit()
+    if not cap.isOpened():
+        print("❌ Camera not found!")
+        exit()
 
-#     print("🎥 Starting hand tracker... Press Q to quit.")
+    print("🎥 Starting hand tracker... Press Q to quit.")
 
-#     while True:
-#         ret, frame = cap.read()
-#         if not ret:
-#             break
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-#         frame, events = tracker.process(frame)
+        frame, events = tracker.process(frame)
 
-#         for ev in events:
-#             print("EVENT:", ev)
+        for ev in events:
+            print("EVENT:", ev)
 
-#         cv2.imshow("Hand Tracking", frame)
+        cv2.imshow("Hand Tracking", frame)
 
-#         if cv2.waitKey(1) & 0xFF == ord('q'):
-#             break
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-#     cap.release()
-#     cv2.destroyAllWindows()
+    cap.release()
+    cv2.destroyAllWindows()
